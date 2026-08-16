@@ -1,0 +1,9 @@
+/node_modules/
+/dist/
+/www/
+/.angular/
+/android/
+/coverage/
+*.log
+.DS_Store
+Thumbs.db

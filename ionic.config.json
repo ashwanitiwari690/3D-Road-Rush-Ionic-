@@ -1,0 +1,7 @@
+{
+  "name": "escape-the-monster",
+  "type": "angular",
+  "integrations": {
+    "capacitor": {}
+  }
+}
