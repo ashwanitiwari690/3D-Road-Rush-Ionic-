@@ -150,3 +150,23 @@ radial-gradient(ellipse at center,transparent 48%,rgba(0,0,0,.22) 100%)}
   .hud-speed{min-width:74px;padding:8px 9px;}
   .hud-speed b{font-size:14px;}
 }
+
+/* Coin Redemption: Profile-page card converting local coins to ₹ via the centralized Earnivo Game Reward API. */
+.redeem-card{margin-top:18px;text-align:left;padding:18px;border-radius:18px;background:linear-gradient(160deg,#1a2412,#0f1826);border:1px solid #33481f}
+.redeem-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.redeem-head span{font-size:26px}
+.redeem-head b,.redeem-head small{display:block}
+.redeem-head b{font-size:12px;letter-spacing:.5px}
+.redeem-head small{font-size:10px;color:#8f9caf;margin-top:3px}
+.redeem-stats{display:grid;grid-template-columns:1fr auto;gap:6px 10px;margin-bottom:14px}
+.redeem-stats span{font-size:10px;color:#8fae6f}
+.redeem-stats b{font-size:12px;text-align:right}
+.redeem-locked{padding:14px;border-radius:12px;background:#141e2e;color:#aab6c7;font-size:11px;text-align:center}
+.redeem-error{display:block;margin-top:10px;color:#ff8b96;font-size:10px;text-align:center}
+.redeem-success{text-align:center}
+.redeem-success>b{display:block;font-size:16px;margin-bottom:12px}
+.redeem-success-grid{display:grid;grid-template-columns:1fr auto;gap:8px 10px;text-align:left;background:#0f1826;border:1px solid #26364c;border-radius:14px;padding:14px;margin-bottom:10px}
+.redeem-success-grid span{font-size:10px;color:#8492a5}
+.redeem-success-grid b{font-size:12px;text-align:right}
+.redeem-txn{word-break:break-all}
+.redeem-success>small{display:block;color:#8f9caf;font-size:10px;line-height:1.4;margin-bottom:12px}
