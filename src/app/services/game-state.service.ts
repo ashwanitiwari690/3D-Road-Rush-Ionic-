@@ -81,7 +81,11 @@ export class GameStateService {
     { id: '🏍️', name: 'Street Bike', price: 300 },
     { id: '🚓', name: 'Highway Patrol', price: 350 },
     { id: '🚘', name: 'Night Cruiser', price: 450 },
-    { id: '🏁', name: 'Champion Edition', price: 600 }
+    { id: '🏁', name: 'Champion Edition', price: 600 },
+    { id: '🚐', name: 'Party Van', price: 700 },
+    { id: '🚚', name: 'Cargo Hauler', price: 800 },
+    { id: '🚛', name: 'Big Rig', price: 900 },
+    { id: '🛺', name: 'Tuk-Tuk Special', price: 1000 }
   ];
   readonly ownedAvatars = signal<Set<string>>(readOwnedAvatars(STORAGE.ownedAvatars, [this.avatar()]));
   readonly garageAdProgress = signal<Record<string, number>>(readGarageAdProgress(STORAGE.garageAdProgress));
