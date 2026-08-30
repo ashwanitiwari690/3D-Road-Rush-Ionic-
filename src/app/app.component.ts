@@ -1,5 +1,6 @@
-import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, OnDestroy, ViewChild, signal } from '@angular/core';
+import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, OnDestroy, ViewChild, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { GameRewardService, GameConfig, RedeemGameRewardData } from './services/game-reward.service';
 
 interface Obstacle { lane: number; z: number; kind: 'car' | 'barrier' | 'cone'; speed: number; color: string; }
 interface RoadCoin { lane: number; z: number; value: number; }
@@ -12,8 +13,11 @@ const STORAGE = {
   daily: 'road-rush-daily', sound: 'road-rush-sound', music: 'road-rush-music',
   vibration: 'road-rush-vibration', name: 'road-rush-profile-name', avatar: 'road-rush-profile-avatar',
   adCooldown: 'road-rush-ad-cooldown', ownedAvatars: 'road-rush-owned-avatars',
-  garageAdProgress: 'road-rush-garage-ad-progress'
+  garageAdProgress: 'road-rush-garage-ad-progress', redeemKey: 'road-rush-redeem-idempotency'
 } as const;
+
+type RedeemState = 'idle' | 'loading' | 'success' | 'error';
+interface RedeemKeySnapshot { key: string; coins: number; mobileNumber: string; }
 
 const readNum = (key: string, fallback: number) => {
   try { const n = Number(localStorage.getItem(key)); return Number.isFinite(n) ? Math.max(0, n) : fallback; } catch { return fallback; }
@@ -138,6 +142,45 @@ const readGarageAdProgress = (key: string): Record<string, number> => {
         <label class="profile-label">PLAYER NAME</label><input class="profile-input" [value]="profileName()" maxlength="18" (input)="updateProfileName($any($event.target).value)" placeholder="Enter your name">
         <button class="secondary garage-link" (click)="go('garage')">🚘 CHANGE AVATAR IN GARAGE</button>
         <div class="profile-summary"><span>🏆 Best Score</span><b>{{high()}}</b><span>⚡ Level</span><b>{{level()}}</b><span>🪙 Coins</span><b>{{coins()}}</b></div>
+
+        <div class="redeem-card" *ngIf="gameConfig() as cfg">
+          <div class="redeem-head"><span>💸</span><div><b>COIN REDEMPTION</b><small>Convert coins to real ₹ in your Earnivo wallet</small></div></div>
+
+          <ng-container *ngIf="redeemState() === 'success' && redeemResult() as result; else redeemForm">
+            <div class="redeem-success">
+              <b>Redemption Successful 🎉</b>
+              <div class="redeem-success-grid">
+                <span>Coins Redeemed</span><b>{{result.coinsRedeemed | number}} Coins</b>
+                <span>Amount Credited</span><b>₹{{result.amountCredited}}</b>
+                <span>Transaction ID</span><b class="redeem-txn">{{result.transactionId}}</b>
+              </div>
+              <small>Your reward has been credited to your Earnivo wallet.</small>
+              <button class="secondary" (click)="dismissRedeemResult()">DONE</button>
+            </div>
+          </ng-container>
+
+          <ng-template #redeemForm>
+            <div class="redeem-stats">
+              <span>Available Coins</span><b>{{coins() | number}} Coins</b>
+              <span>Minimum Required</span><b>{{cfg.minimumCoins | number}} Coins</b>
+              <span>Current Conversion</span><b>{{cfg.coinsPerConversion | number}} Coins = ₹{{cfg.rupeesPerConversion}}</b>
+            </div>
+
+            <ng-container *ngIf="coins() >= cfg.minimumCoins; else redeemLocked">
+              <label class="profile-label">REGISTERED MOBILE NUMBER</label>
+              <input class="profile-input" type="tel" inputmode="numeric" autocomplete="tel" maxlength="10"
+                placeholder="10 digit mobile number" [value]="redeemMobileNumber()" [disabled]="redeemState() === 'loading'"
+                (input)="onRedeemMobileInput($any($event.target).value)">
+              <button class="play-btn" [disabled]="!redeemMobileValid() || redeemState() === 'loading' || isBlockedByDuplicate()"
+                (click)="redeemCoins(cfg)">{{redeemState() === 'loading' ? 'REDEEMING…' : 'REDEEM COINS'}}</button>
+              <small class="redeem-error" *ngIf="redeemState() === 'error'">{{redeemErrorMessage()}}</small>
+            </ng-container>
+            <ng-template #redeemLocked>
+              <div class="redeem-locked">🔒 Reach {{cfg.minimumCoins | number}} coins to unlock coin redemption.</div>
+            </ng-template>
+          </ng-template>
+        </div>
+
         <button class="play-btn" (click)="go('home')">SAVE PROFILE</button>
       </section>
 
@@ -212,6 +255,16 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly garageAdProgress = signal<Record<string, number>>(readGarageAdProgress(STORAGE.garageAdProgress));
   readonly adCooldownUntil = signal(readNum(STORAGE.adCooldown, 0)); readonly now = signal(Date.now());
 
+  private rewardService = inject(GameRewardService);
+  readonly gameConfig = signal<GameConfig | null>(null);
+  readonly gameConfigStatus = signal<'idle' | 'loading' | 'loaded' | 'error'>('idle');
+  readonly redeemState = signal<RedeemState>('idle');
+  readonly redeemMobileNumber = signal('');
+  readonly redeemErrorMessage = signal('');
+  readonly redeemResult = signal<RedeemGameRewardData | null>(null);
+  /** Blocks resubmission of a redemption the backend already confirmed as processed. */
+  private duplicateSnapshot: { coins: number; mobileNumber: string } | null = null;
+
   private ctx?: CanvasRenderingContext2D; private raf = 0; private last = 0; private lane = 1; private targetLane = 1;
   private playerY = 0; private targetPlayerY = 0;
   private obstacles: Obstacle[] = []; private roadCoins: RoadCoin[] = []; private elapsed = 0; private worldScroll = 0; private finished = false;
@@ -243,6 +296,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.screen.set(screen);
     if (screen !== 'game') this.stopGameCanvas();
     if (screen === 'shop') this.showBannerAd();
+    if (screen === 'profile') this.loadGameConfig();
   }
 
   startGame(): void {
@@ -712,6 +766,85 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   updateProfileName(name: string): void { const safe = String(name || '').trim().slice(0, 18) || 'Road Racer'; this.profileName.set(safe); save(STORAGE.name, safe); }
   setAvatar(item: string): void { this.avatar.set(item); save(STORAGE.avatar, item); this.playSound('click'); }
+
+  private loadGameConfig(): void {
+    if (this.gameConfigStatus() !== 'idle') return;
+    this.gameConfigStatus.set('loading');
+    this.rewardService.getGameConfig().subscribe({
+      next: cfg => { this.gameConfig.set(cfg ?? null); this.gameConfigStatus.set('loaded'); },
+      error: () => this.gameConfigStatus.set('error')
+    });
+  }
+
+  redeemMobileValid(): boolean { return /^\d{10}$/.test(this.redeemMobileNumber()); }
+
+  isBlockedByDuplicate(): boolean {
+    const s = this.duplicateSnapshot;
+    return !!s && s.coins === this.coins() && s.mobileNumber === this.redeemMobileNumber();
+  }
+
+  onRedeemMobileInput(value: string): void {
+    this.redeemMobileNumber.set(String(value || '').replace(/\D/g, '').slice(0, 10));
+    if (this.redeemState() !== 'loading') { this.redeemState.set('idle'); this.redeemErrorMessage.set(''); }
+  }
+
+  redeemCoins(cfg: GameConfig): void {
+    if (this.coins() < cfg.minimumCoins || !this.redeemMobileValid() || this.redeemState() === 'loading' || this.isBlockedByDuplicate()) return;
+    const coinsToRedeem = this.coins();
+    const mobileNumber = this.redeemMobileNumber();
+    const idempotencyKey = this.getOrCreateIdempotencyKey(coinsToRedeem, mobileNumber);
+    this.redeemState.set('loading'); this.redeemErrorMessage.set('');
+    this.rewardService.redeemCoins(mobileNumber, coinsToRedeem, idempotencyKey).subscribe({
+      next: response => this.handleRedeemSuccess(response),
+      error: (err: { errorCode?: string; message?: string }) => this.handleRedeemFailure(err.errorCode, err.message)
+    });
+  }
+
+  private handleRedeemSuccess(response: RedeemGameRewardData): void {
+    // Backend is the source of truth for both the deducted coins and the ₹ amount — never computed locally.
+    const safeAmount = Math.max(0, Math.min(this.coins(), Math.floor(response.coinsRedeemed) || 0));
+    this.coins.update(v => v - safeAmount); save(STORAGE.coins, this.coins());
+    this.redeemResult.set(response); this.redeemState.set('success'); this.clearIdempotencyKey(); this.duplicateSnapshot = null;
+  }
+
+  private handleRedeemFailure(errorCode?: string, message?: string): void {
+    this.redeemState.set('error');
+    if (errorCode === 'DUPLICATE_CONVERSION') {
+      this.duplicateSnapshot = { coins: this.coins(), mobileNumber: this.redeemMobileNumber() };
+      this.redeemErrorMessage.set('This redemption has already been processed. Please check your wallet before trying again.');
+      return;
+    }
+    // Coins were never deducted locally, so a network/backend failure is a safe, retryable state.
+    this.redeemErrorMessage.set(this.mapRedeemError(errorCode, message));
+  }
+
+  private mapRedeemError(errorCode?: string, message?: string): string {
+    if (errorCode === 'USER_SUSPENDED') return 'Your account is currently unavailable for redemption.';
+    if (errorCode === 'NETWORK_ERROR') return 'Unable to connect to the server. Please check your internet connection and try again.';
+    const msg = (message || '').toLowerCase();
+    if (msg.includes('unknown or inactive game')) return 'Coin redemption is currently unavailable for this game.';
+    if (msg.includes('no earnivo account')) return 'No Earnivo account was found for this mobile number.';
+    if (msg.includes('minimum of')) return 'You have not reached the minimum redemption limit yet.';
+    return 'Something went wrong while processing your redemption. Your coins have not been deducted.';
+  }
+
+  dismissRedeemResult(): void {
+    this.redeemState.set('idle'); this.redeemResult.set(null); this.redeemErrorMessage.set(''); this.redeemMobileNumber.set(''); this.duplicateSnapshot = null;
+  }
+
+  private getOrCreateIdempotencyKey(coins: number, mobileNumber: string): string {
+    try {
+      const raw = localStorage.getItem(STORAGE.redeemKey);
+      if (raw) {
+        const stored = JSON.parse(raw) as Partial<RedeemKeySnapshot>;
+        if (stored && stored.coins === coins && stored.mobileNumber === mobileNumber && typeof stored.key === 'string') return stored.key;
+      }
+    } catch { }
+    const key = `roadrush-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    try { save(STORAGE.redeemKey, JSON.stringify({ key, coins, mobileNumber } as RedeemKeySnapshot)); } catch { }
+    return key;
+  }
+  private clearIdempotencyKey(): void { try { localStorage.removeItem(STORAGE.redeemKey); } catch { } }
 
   isOwned(item: AvatarOption): boolean { return this.ownedAvatars().has(item.id); }
   garageStatus(item: AvatarOption): 'selected' | 'owned' | 'locked' {
