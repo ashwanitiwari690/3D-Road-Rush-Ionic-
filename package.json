@@ -11,6 +11,7 @@
     "cap:sync": "cap sync",
     "android:add": "cap add android",
     "android:open": "cap open android",
+    "assets:generate": "capacitor-assets generate --android",
     "ionic:serve": "ng serve"
   },
   "dependencies": {
@@ -29,11 +30,15 @@
     "@angular-devkit/build-angular": "^20.2.0",
     "@angular/cli": "^20.2.0",
     "@angular/compiler-cli": "^20.2.0",
+    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^7.4.3",
     "typescript": "~5.9.2"
   },
   "engines": {
     "node": ">=24.0.0",
     "npm": ">=10.0.0"
+  },
+  "allowScripts": {
+    "sharp@0.32.6": true
   }
 }
