@@ -1,9 +1,10 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { filter, map } from 'rxjs';
 import { GameStateService } from './services/game-state.service';
+import { AppVerificationService } from './services/app-verification.service';
 
 @Component({
   selector: 'app-root',
@@ -31,9 +32,10 @@ import { GameStateService } from './services/game-state.service';
   styleUrl: './shared/game-ui.scss',
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class AppComponent {
+export class AppComponent implements OnInit {
   readonly gs = inject(GameStateService);
   private router = inject(Router);
+  private appVerification = inject(AppVerificationService);
   readonly isGameRoute = toSignal(
     this.router.events.pipe(
       filter((e): e is NavigationEnd => e instanceof NavigationEnd),
@@ -41,4 +43,10 @@ export class AppComponent {
     ),
     { initialValue: this.router.url.startsWith('/game') }
   );
+
+  ngOnInit(): void {
+    // Fire-and-forget: confirms this device with Earnivo for its App Promotion
+    // campaign, if a task is pending. Safe/idempotent to run on every launch.
+    void this.appVerification.confirmInstall();
+  }
 }
