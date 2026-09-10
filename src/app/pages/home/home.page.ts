@@ -27,8 +27,8 @@ import { GameStateService } from '../../services/game-state.service';
     <div class="quick-grid">
       <button (click)="gs.go('shop')"><b>🪙</b><span>COIN CENTER</span><small>Earn & manage coins</small></button>
       <button (click)="gs.go('missions')"><b>🎯</b><span>MISSIONS</span><small>Level {{gs.level()}} goals</small></button>
-      <button (click)="gs.watchRewardedAd()" [disabled]="gs.adCooldownActive()"><b>📺</b><span>REWARDED AD</span><small>{{gs.adButtonLabel()}}</small></button>
-      <button (click)="gs.claimDaily()"><b>🎁</b><span>DAILY BONUS</span><small>+50 coins</small></button>
+      <button (click)="gs.watchRewardedAd()" [disabled]="gs.adCooldownActive() || gs.adBusy()"><b>📺</b><span>REWARDED AD</span><small>{{gs.adButtonLabel()}}</small></button>
+      <button (click)="gs.claimDaily()" [disabled]="gs.adBusy()"><b>🎁</b><span>DAILY BONUS</span><small>+50 coins</small></button>
       <button (click)="gs.go('profile')"><b>{{gs.avatar()}}</b><span>PROFILE</span><small>{{gs.profileName()}}</small></button>
       <button class="garage-tile" (click)="gs.go('garage')"><b>🚘</b><span>GARAGE</span><small>Purchase new rides</small></button>
     </div>

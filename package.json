@@ -9,7 +9,7 @@
     "build:dev": "ng build",
     "test": "ng test --watch=false --browsers=ChromeHeadless",
     "cap:sync": "cap sync",
-    "android:add": "cap add android && node scripts/setup-advertising-id-android.js",
+    "android:add": "cap add android && node scripts/setup-advertising-id-android.js && node scripts/setup-admob-android.js",
     "android:open": "cap open android",
     "assets:generate": "capacitor-assets generate --android && node scripts/fix-adaptive-icon.js",
     "ionic:serve": "ng serve"
@@ -20,6 +20,7 @@
     "@angular/core": "^20.2.0",
     "@angular/platform-browser": "^20.2.0",
     "@angular/router": "^20.2.0",
+    "@capacitor-community/admob": "^8.1.0",
     "@capacitor-community/advertising-id": "^7.1.0",
     "@capacitor/android": "^7.4.3",
     "@capacitor/core": "^7.4.3",

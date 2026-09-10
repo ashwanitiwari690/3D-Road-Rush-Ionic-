@@ -1,4 +1,4 @@
-import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
+import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, OnDestroy, ViewChild, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { GameStateService } from '../../services/game-state.service';
 
@@ -37,6 +37,14 @@ interface Sprite { canvas: HTMLCanvasElement; originX: number; originY: number; 
     </div>
     <div class="drive-tip"><span>↔</span><div><b>TOUCH & DRAG</b><small>Steer anywhere on the road</small></div></div>
     <div class="center-msg" *ngIf="gs.paused()"><div class="pause-card"><b>PAUSED</b><span>Take a breath — the road is waiting.</span><button class="play-btn small" (click)="togglePause()">▶ RESUME</button></div></div>
+    <div class="center-msg" *ngIf="extraLifeOffer()">
+      <div class="pause-card">
+        <b>💥 CRASHED!</b>
+        <span>Watch a rewarded ad for one extra life and keep driving?</span>
+        <button class="play-btn small" [disabled]="gs.adBusy()" (click)="watchExtraLifeAd()">📺 {{gs.adBusy() ? 'LOADING…' : 'WATCH AD · CONTINUE'}}</button>
+        <button class="ghost small" [disabled]="gs.adBusy()" (click)="declineExtraLife()">END RUN</button>
+      </div>
+    </div>
   </section>
   `,
   styleUrl: '../../shared/game-ui.scss',
@@ -56,6 +64,8 @@ export class GamePage implements AfterViewInit, OnDestroy {
   // Visual "juice": banking/tilt, screen shake, tire dust, coin sparkle + score popups and crash debris.
   // None of this feeds back into game state (lanes/z/scoring) — purely additive rendering.
   private tilt = 0; private shake = 0; private crashing = false;
+  /** Shown after a crash when an extra-life rewarded ad can still be offered this run (see GameStateService.canOfferExtraLife). */
+  readonly extraLifeOffer = signal(false);
   private dustTimer = 0;
   private carX = 0; private carY = 0; private carScale = 0.8;
   private viewW = 0; private viewH = 0;
@@ -77,6 +87,7 @@ export class GamePage implements AfterViewInit, OnDestroy {
     this.finished = false; this.elapsed = 0; this.worldScroll = 0; this.lane = 1; this.targetLane = 1; this.playerY = 0; this.targetPlayerY = 0; this.pointerActive = false;
     this.obstacles = []; this.roadCoins = []; this.runStartedAt = performance.now(); this.last = this.runStartedAt;
     this.tilt = 0; this.shake = 0; this.crashing = false; this.dustTimer = 0; this.dust = []; this.fx = []; this.floatingTexts = [];
+    this.extraLifeOffer.set(false);
     requestAnimationFrame(() => {
       const canvas = this.canvas?.nativeElement; if (!canvas) return;
       this.resizeCanvas(); this.observeCanvas(); this.spawnInitial(); this.draw(); this.raf = requestAnimationFrame(this.loop);
@@ -252,9 +263,32 @@ export class GamePage implements AfterViewInit, OnDestroy {
       this.updateEffects(dt);
       this.draw();
       if (t - crashStart < 380) this.raf = requestAnimationFrame(crashLoop);
-      else this.finishRun(false);
+      else this.afterCrash();
     };
     this.raf = requestAnimationFrame(crashLoop);
+  }
+
+  /** After the crash animation settles: offer one extra-life ad if this run hasn't used one yet, otherwise end the run. */
+  private afterCrash(): void {
+    if (this.gs.canOfferExtraLife()) { this.extraLifeOffer.set(true); return; }
+    this.finishRun(false);
+  }
+  async watchExtraLifeAd(): Promise<void> {
+    const granted = await this.gs.watchExtraLifeAd();
+    this.extraLifeOffer.set(false);
+    if (granted) this.reviveAfterExtraLife();
+    else this.finishRun(false);
+  }
+  declineExtraLife(): void {
+    this.extraLifeOffer.set(false);
+    this.finishRun(false);
+  }
+  /** Clears the obstacle that caused the crash so the player doesn't instantly hit it again, then resumes the loop. */
+  private reviveAfterExtraLife(): void {
+    this.crashing = false;
+    this.obstacles = this.obstacles.filter(o => !(o.z > 0.9 && Math.abs(o.lane - this.lane) < 0.3));
+    this.last = performance.now();
+    this.raf = requestAnimationFrame(this.loop);
   }
   private finishRun(completed: boolean): void {
     if (this.finished) return; this.finished = true; cancelAnimationFrame(this.raf); this.resizeObserver?.disconnect();

@@ -23,6 +23,47 @@ button {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
 }
 
+.offline-screen {
+  min-height: 100dvh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #060b13;
+  color: #f7f8fb;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
+}
+
+.offline-card {
+  max-width: 360px;
+  width: 100%;
+  text-align: center;
+  padding: 32px 24px;
+  border-radius: 24px;
+  background: linear-gradient(145deg, #142337, #0c1522);
+  border: 1px solid #3a526c;
+  box-shadow: 0 25px 80px #000b
+}
+
+.offline-icon {
+  font-size: 48px;
+  margin-bottom: 14px
+}
+
+.offline-card h1 {
+  font-size: 20px;
+  letter-spacing: .5px;
+  margin: 0 0 10px
+}
+
+.offline-card p {
+  font-size: 12px;
+  color: #9ba8bb;
+  line-height: 1.5;
+  margin: 0 0 18px
+}
+
 .topbar {
   height: 70px;
   padding: 10px max(16px, calc((100vw - 1080px)/2));
@@ -103,7 +144,8 @@ button {
 .content {
   width: min(1080px, 100%);
   margin: auto;
-  padding: 20px
+  padding: 20px;
+  padding-bottom: calc(20px + var(--ad-banner-space, 0px))
 }
 
 .hero-card {

@@ -1,6 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { GameRewardService, GameConfig, RedeemGameRewardData } from './game-reward.service';
+import { AdmobService } from './admob.service';
 
 export interface AvatarOption { id: string; name: string; price: number; }
 
@@ -40,6 +41,7 @@ const readGarageAdProgress = (key: string): Record<string, number> => {
 export class GameStateService {
   private router = inject(Router);
   private rewardService = inject(GameRewardService);
+  private admob = inject(AdmobService);
 
   readonly rewardAmount = 100;
   private readonly adCooldownMs = 2 * 60 * 60 * 1000;
@@ -63,8 +65,14 @@ export class GameStateService {
   readonly adBusy = signal(false);
   readonly adFallback = signal(false);
   readonly adMessage = signal('Loading Google AdMob rewarded video…');
-  readonly adPurpose = signal<'reward' | 'daily' | 'garage'>('reward');
+  readonly adPurpose = signal<'reward' | 'daily' | 'garage' | 'double' | 'extraLife'>('reward');
   readonly adGarageItemId = signal<string | null>(null);
+  /** One-shot per run: watch an ad right after a crash to keep driving instead of ending the run. */
+  readonly extraLifeUsedThisRun = signal(false);
+  /** One-shot per result screen: watch an ad to double the coins just earned in that run. */
+  readonly doubleCoinsClaimed = signal(false);
+
+  private pendingFallbackResolve: ((granted: boolean) => void) | null = null;
 
   readonly soundEnabled = signal(localStorage.getItem(STORAGE.sound) !== '0');
   readonly musicEnabled = signal(localStorage.getItem(STORAGE.music) !== '0');
@@ -113,16 +121,14 @@ export class GameStateService {
 
   go(path: Screen): void {
     this.playSound('click');
-    const current = (this.router.url.split('?')[0].slice(1) || 'home') as Screen;
-    if (current === 'shop' && path !== 'shop') this.hideBannerAd();
     this.router.navigateByUrl('/' + path);
-    if (path === 'shop') this.showBannerAd();
     if (path === 'profile') this.loadGameConfig();
   }
 
   startRun(): void {
     this.playSound('click'); this.startMusic();
     this.paused.set(false); this.distance.set(0); this.runCoins.set(0); this.speed.set(this.baseSpeed());
+    this.extraLifeUsedThisRun.set(false);
     this.router.navigateByUrl('/game');
   }
 
@@ -135,8 +141,11 @@ export class GameStateService {
     this.completedRun.set(completed);
     if (completed) { this.playSound('level'); if (this.level() < 30) { this.level.update(v => v + 1); save(STORAGE.level, this.level()); } }
     this.lastDistance.set(this.distance()); this.lastRunCoins.set(this.runCoins()); this.lastScore.set(score);
+    this.doubleCoinsClaimed.set(false);
     save(STORAGE.coins, this.coins());
-    this.router.navigateByUrl('/result');
+    // Natural breakpoint for a frequency-capped interstitial — leaving a finished round.
+    // Falls straight through to navigation on web/dev, or if no interstitial is ready in time.
+    void this.admob.maybeShowInterstitialAtBreakpoint().finally(() => this.router.navigateByUrl('/result'));
   }
 
   collectCoin(value: number): void {
@@ -261,7 +270,11 @@ export class GameStateService {
   garageAdCount(item: AvatarOption): number { return this.garageAdProgress()[item.id] || 0; }
   watchGarageAd(item: AvatarOption): void {
     if (this.isOwned(item) || this.adBusy()) return;
-    this.playAd('garage', item.id);
+    void this.runGarageAd(item);
+  }
+  private async runGarageAd(item: AvatarOption): Promise<void> {
+    const granted = await this.requestRewardedAd('garage', 'Loading Google AdMob unlock video…', item.id);
+    if (granted) this.grantGarageAdProgress();
   }
   private grantGarageAdProgress(): void {
     const id = this.adGarageItemId();
@@ -284,7 +297,11 @@ export class GameStateService {
     const today = new Date().toISOString().slice(0, 10);
     if (localStorage.getItem(STORAGE.daily) === today) { this.notify('Daily bonus already claimed.'); return; }
     if (this.adBusy()) return;
-    this.playAd('daily');
+    void this.runDailyAd();
+  }
+  private async runDailyAd(): Promise<void> {
+    const granted = await this.requestRewardedAd('daily', 'Loading Google AdMob daily bonus video…');
+    if (granted) this.grantDailyCoins();
   }
 
   adCooldownActive(): boolean { return this.adCooldownUntil() > this.now(); }
@@ -293,43 +310,85 @@ export class GameStateService {
   async watchRewardedAd(): Promise<void> {
     if (this.adCooldownActive()) { this.notify(`Reward available again in ${this.adCooldownText()}.`); return; }
     if (this.adBusy()) return;
-    await this.playAd('reward');
+    const granted = await this.requestRewardedAd('reward', 'Loading Google AdMob rewarded video…');
+    if (granted) this.grantAdCoins(this.rewardAmount);
   }
-  private async playAd(purpose: 'reward' | 'daily' | 'garage', garageItemId?: string): Promise<void> {
+
+  canClaimDoubleCoins(): boolean { return this.lastRunCoins() > 0 && !this.doubleCoinsClaimed() && !this.adBusy(); }
+  /** Result-screen offer: watch one more ad to double the coins just earned this run. */
+  async claimDoubleCoins(): Promise<void> {
+    if (!this.canClaimDoubleCoins()) return;
+    const granted = await this.requestRewardedAd('double', 'Loading Google AdMob double-coins video…');
+    if (granted) this.grantDoubleCoins();
+  }
+
+  canOfferExtraLife(): boolean { return !this.extraLifeUsedThisRun() && !this.adBusy(); }
+  /** Called from the game canvas right after a crash. Resolves true only once the ad confirms the reward, so the caller knows whether to revive or end the run. */
+  async watchExtraLifeAd(): Promise<boolean> {
+    if (!this.canOfferExtraLife()) return false;
+    const granted = await this.requestRewardedAd('extraLife', 'Loading Google AdMob extra-life video…');
+    if (granted) { this.extraLifeUsedThisRun.set(true); this.notify('Extra life granted — keep driving!'); }
+    return granted;
+  }
+
+  /** Title/hint shown on the shared full-screen ad-loading sheet in the app shell, per ad purpose. */
+  adTitle(): string {
+    switch (this.adPurpose()) {
+      case 'daily': return 'DAILY BONUS AD';
+      case 'garage': return 'UNLOCK RIDE AD';
+      case 'double': return 'DOUBLE COINS AD';
+      case 'extraLife': return 'EXTRA LIFE AD';
+      default: return 'REWARDED AD';
+    }
+  }
+  adHint(): string {
+    switch (this.adPurpose()) {
+      case 'garage': return 'This ride unlocks once you have watched enough ads.';
+      case 'double': return 'Your run coins are doubled only after the ad reports completion.';
+      case 'extraLife': return 'You continue this run only after the ad reports completion.';
+      case 'daily': return 'Coins are granted only after the daily bonus ad reports completion.';
+      default: return 'Coins are granted only after the rewarded ad reports completion.';
+    }
+  }
+
+  /**
+   * Single entry point every rewarded-ad flow in the app goes through. Resolves true ONLY when
+   * AdMob's own reward callback confirms completion (via AdmobService.showRewarded()) — never
+   * optimistically. Every calling button binds its [disabled] to `adBusy`, which this sets for
+   * the whole time an ad is in flight, so a real ad in progress can't be double-triggered by
+   * extra taps or a second reward flow starting underneath it.
+   */
+  private async requestRewardedAd(purpose: 'reward' | 'daily' | 'garage' | 'double' | 'extraLife', message: string, garageItemId?: string): Promise<boolean> {
+    if (this.adBusy()) return false;
     this.adPurpose.set(purpose);
     this.adGarageItemId.set(garageItemId ?? null);
     this.adBusy.set(true); this.adFallback.set(false);
-    this.adMessage.set(purpose === 'daily' ? 'Loading Google AdMob daily bonus video…' : purpose === 'garage' ? 'Loading Google AdMob unlock video…' : 'Loading Google AdMob rewarded video…');
+    this.adMessage.set(message);
     this.playSound('click');
-    const cap = (window as any).Capacitor?.Plugins?.AdMob;
-    try {
-      if (cap?.prepareRewardVideoAd && cap?.showRewardVideoAd) {
-        await cap.prepareRewardVideoAd({ adId: 'ca-app-pub-3940256099942544/5224354917', isTesting: true, immersiveMode: true });
-        const reward = await cap.showRewardVideoAd();
-        const amount = Number(reward?.amount || this.rewardAmount);
-        this.finishAd(purpose, amount);
-        return;
-      }
+
+    if (this.admob.isSupported) {
+      const granted = await this.admob.showRewarded();
+      this.adBusy.set(false); this.adFallback.set(false);
+      if (!granted) this.notify('Ad was not completed — no reward this time.');
+      return granted;
     }
-    catch { this.adMessage.set('AdMob is not available. Use the test fallback while developing, then configure the native AdMob plugin for Android.'); }
-    this.adFallback.set(true); this.adMessage.set('TEST MODE: native AdMob was not detected.');
+
+    // Web/dev fallback: native AdMob can't run in a desktop browser. Show a clearly labeled
+    // "TEST MODE" button so the reward flow stays testable without a device — never reachable
+    // on native, where isSupported is true and the branch above always runs instead.
+    return new Promise<boolean>(resolve => {
+      this.pendingFallbackResolve = resolve;
+      this.adFallback.set(true);
+      this.adMessage.set('TEST MODE: AdMob only runs on the Android app. Tap below to simulate a completed ad.');
+    });
   }
-  completeFallbackAd(): void { this.finishAd(this.adPurpose(), this.rewardAmount); }
-  private finishAd(purpose: 'reward' | 'daily' | 'garage', amount: number): void {
+  /** Resolves the pending web/dev fallback promise from requestRewardedAd(). Only reachable when AdMob isn't supported (see adFallback). */
+  completeFallbackAd(): void {
     this.adBusy.set(false); this.adFallback.set(false);
-    if (purpose === 'daily') this.grantDailyCoins();
-    else if (purpose === 'garage') this.grantGarageAdProgress();
-    else this.grantAdCoins(amount);
+    const resolve = this.pendingFallbackResolve; this.pendingFallbackResolve = null;
+    resolve?.(true);
   }
   private grantDailyCoins(): void { const today = new Date().toISOString().slice(0, 10); this.coins.update(v => v + 50); save(STORAGE.coins, this.coins()); save(STORAGE.daily, today); this.notify('+50 daily coins!'); }
   private grantAdCoins(amount: number): void { const safe = Math.max(1, Math.min(500, Math.floor(amount))); this.coins.update(v => v + safe); save(STORAGE.coins, this.coins()); const until = Date.now() + this.adCooldownMs; this.adCooldownUntil.set(until); save(STORAGE.adCooldown, until); this.notify(`+${safe} coins added. Next ad in 02:00:00.`); }
-
-  showBannerAd(): void {
-    const cap = (window as any).Capacitor?.Plugins?.AdMob;
-    cap?.showBanner?.({ adId: 'ca-app-pub-3940256099942544/6300978111', adSize: 'BANNER', position: 'BOTTOM_CENTER', isTesting: true })?.catch?.(() => { });
-  }
-  hideBannerAd(): void {
-    const cap = (window as any).Capacitor?.Plugins?.AdMob;
-    cap?.hideBanner?.()?.catch?.(() => { });
-  }
+  private grantDoubleCoins(): void { const amount = this.lastRunCoins(); this.doubleCoinsClaimed.set(true); this.coins.update(v => v + amount); save(STORAGE.coins, this.coins()); this.notify(`+${amount} bonus coins — doubled!`); }
 }
