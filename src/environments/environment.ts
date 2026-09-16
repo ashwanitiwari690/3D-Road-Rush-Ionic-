@@ -1,6 +1,6 @@
 export const environment = {
   production: false,
-  apiBaseUrl: 'http://localhost:4227/api',
+  apiBaseUrl: 'https://api.admobility.in/api',
   // Per-campaign key shown in the Earnivo agent panel for this app's App Promotion campaign.
-  earnivoAppVerificationApiKey: ''
+  earnivoAppVerificationApiKey: 'ak_399fbaddea14730ea244be74e91200fd48d7e158e41aa288'
 };
